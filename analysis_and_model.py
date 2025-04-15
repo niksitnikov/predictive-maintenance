@@ -5,6 +5,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import streamlit as st
 import joblib
+import requests
 import xgboost as xgb
 
 from matplotlib.patches import Patch
@@ -22,6 +23,8 @@ def analysis_and_model_page() -> None:
     Включает предобработку, подбор гиперпараметров, кросс-валидацию,
     сохранение модели и интерактивное предсказание.
     """
+    # FIXME: Надо как-то попробовать разделить UI Streamlit-приложение
+    # и обучение модели
     st.title("Анализ данных и модель")
 
     # Инициализация ClearML задачи
@@ -51,6 +54,8 @@ def analysis_and_model_page() -> None:
     data.drop(columns=['UDI', 'Product ID', 'TWF', 'HDF', 'PWF', 'OSF', 'RNF'],
               errors='ignore',
               inplace=True)
+
+    print(data.head)
 
     # Кодирование категориального признака
     encoder = LabelEncoder()
@@ -165,35 +170,36 @@ def analysis_and_model_page() -> None:
     )
     st.pyplot(fig)
 
-    # Интерактивная форма предсказания
-    st.header("Предсказание по новым данным")
-    with st.form("prediction_form"):
-        prod_type = st.selectbox("Тип продукта", ["L", "M", "H"])
-        air_temp = st.number_input("Air temperature [K]")
-        process_temp = st.number_input("Process temperature [K]")
-        rotational_speed = st.number_input("Rotational speed [rpm]")
-        torque = st.number_input("Torque [Nm]")
-        tool_wear = st.number_input("Tool wear [min]")
+    # Интерфейс Streamlit
+    st.title("Прогнозирование отказов оборудования")
+
+    with st.form("prediction_form"):  # Ввод данных пользователем
+        prod_type = st.selectbox("Идентификатор продукта", ["L", "M", "H"])
+        air_temp = st.number_input("Температура окружающей среды [K]")
+        process_temp = st.number_input("Рабочая температура [K]")
+        rotational_speed = st.number_input("Скорость вращения [rpm]")
+        torque = st.number_input("Крутящий момент [Nm]")
+        tool_wear = st.number_input("Износ инструмента [мин]")
+
         submit_button = st.form_submit_button("Предсказать")
 
-        if submit_button:
-            input_data = pd.DataFrame(
-                [[prod_type, air_temp, process_temp,
-                  rotational_speed, torque, tool_wear]],
-                columns=['Type'] + numerical_features
-            )
-            input_data['Type'] = encoder.transform(input_data['Type'])
-            input_data[numerical_features] = scaler.transform(
-                input_data[numerical_features]
-            )
-
-            prediction = loaded_model.predict(input_data)
-            prediction_proba = loaded_model.predict_proba(input_data)[:, 1]
-
-            st.write(f"Предсказание: {prediction[0]}")
-            st.write(f"Вероятность отказа: {prediction_proba[0]:.2f}")
-
-    task.close()
+    if submit_button:
+        # Формирование запроса для API
+        response = requests.post(
+            "http://127.0.0.1:8080/serve/predictive_maintenance",
+            json={
+                "Product ID": prod_type,
+                "Air temperature [K]": air_temp,
+                "Process temperature [K]": process_temp,
+                "Rotational speed [rpm]": rotational_speed,
+                "Torque [Nm]": torque,
+                "Tool wear [min]": tool_wear
+            }
+        )
+        # Извлекаем вероятность отказа
+        prediction_proba = response.json()["prediction"][0]
+        # Отображение результатов предсказания
+        st.write(f"Предсказание (вероятность отказа): {prediction_proba:.2f}")
 
 
 def objective_xgb(trial: optuna.trial.Trial,
