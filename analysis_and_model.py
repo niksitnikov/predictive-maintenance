@@ -9,12 +9,12 @@ import requests
 import xgboost as xgb
 
 from matplotlib.patches import Patch
-from sklearn.model_selection import KFold, train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from ucimlrepo import fetch_ucirepo
 from clearml import Task, OutputModel, Dataset, Model
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix
-from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.metrics import classification_report, average_precision_score
 
 
 def analysis_and_model_page() -> None:
@@ -23,8 +23,6 @@ def analysis_and_model_page() -> None:
     Включает предобработку, подбор гиперпараметров, кросс-валидацию,
     сохранение модели и интерактивное предсказание.
     """
-    # FIXME: Надо как-то попробовать разделить UI Streamlit-приложение
-    # и обучение модели
     st.title("Анализ данных и модель")
 
     # Инициализация ClearML задачи
@@ -82,7 +80,7 @@ def analysis_and_model_page() -> None:
     X = data.drop(columns=['Machine failure'])
     y = data['Machine failure']
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X, y, test_size=0.2, stratify=y, random_state=42
     )
 
     # Оптимизация гиперпараметров
@@ -105,10 +103,10 @@ def analysis_and_model_page() -> None:
 
     # Кросс-валидация и логирование
     best_model = None
-    best_roc_auc = -1
+    best_ap = -1
     best_metrics = {}
 
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     for fold, (train_idx, val_idx) in enumerate(kf.split(X, y)):
         st.write(f"Обучение на фолде {fold+1}/5")
         X_train_fold, X_val_fold = X.iloc[train_idx], X.iloc[val_idx]
@@ -120,14 +118,16 @@ def analysis_and_model_page() -> None:
         y_pred = model.predict(X_val_fold)
         y_pred_proba = model.predict_proba(X_val_fold)[:, 1]
 
-        roc_auc = roc_auc_score(y_val_fold, y_pred_proba)
-        st.write(f"Fold {fold+1}: ROC-AUC = {roc_auc:.4f}")
+        # roc_auc = roc_auc_score(y_val_fold, y_pred_proba)
+        ap = average_precision_score(y_val_fold, y_pred_proba)
+        st.write(f"Fold {fold+1}: Average Precision Score (PR-AUC) = {ap:.4f}")
         task.get_logger().report_scalar(
-            "ROC-AUC", f"Fold {fold+1}", roc_auc, iteration=fold
+            "Average Precision Score (PR-AUC)",
+            f"Fold {fold+1}", ap, iteration=fold
         )
 
-        if roc_auc > best_roc_auc:
-            best_roc_auc = roc_auc
+        if ap > best_ap:
+            best_ap = ap
             best_model = model
             best_metrics = {
                 "accuracy": accuracy_score(y_val_fold, y_pred),
@@ -151,12 +151,15 @@ def analysis_and_model_page() -> None:
     loaded_model.load_model(model_path)
 
     # Отображение результатов
-    st.write(f"Загружена лучшая модель с ROC-AUC: {best_roc_auc:.4f}")
+    st.write(
+        "Загружена лучшая модель с Average Precision Score (PR-AUC):"
+        f"{best_ap:.4f}"
+    )
     st.header("Результаты обучения модели")
     st.subheader("XGBoost")
     st.write(
-        f"Accuracy: {best_metrics['accuracy']:.2f}, " +
-        f"ROC-AUC: {best_roc_auc:.2f}"
+        f"Accuracy: {best_metrics['accuracy']:.2f}, "
+        f"Average Precision Score (PR-AUC): {best_ap:.2f}"
     )
 
     # Визуализация confusion matrix
@@ -222,10 +225,11 @@ def objective_xgb(trial: optuna.trial.Trial,
         "use_label_encoder": False,
         "eval_metric": "logloss"
     }
+    params['scale_pos_weight'] = trial.suggest_float('scale_pos_weight', 1, 30)
     model = xgb.XGBClassifier(**params)
     model.fit(X_train, y_train)
     y_pred_proba = model.predict_proba(X_test)[:, 1]
-    return roc_auc_score(y_test, y_pred_proba)
+    return average_precision_score(y_test, y_pred_proba)
 
 
 def detailed_data_analysis():
