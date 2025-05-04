@@ -28,7 +28,7 @@ def analysis_and_model_page() -> None:
     # Инициализация ClearML задачи
     task = Task.init(
         project_name="Predictive Maintenance",
-        task_name="Model Training"
+        task_name="Predictive Maintenance Model"
     )
 
     # Загрузка датасета: если ресурс недоступен - загружаем локально
@@ -36,7 +36,9 @@ def analysis_and_model_page() -> None:
         dataset = fetch_ucirepo(id=601)
         data = pd.concat([dataset.data.features, dataset.data.targets], axis=1)
     except ConnectionError:
-        data = pd.read_csv("data/predictive_maintenance.csv")
+        data = pd.read_csv(
+            "predictive_maintenance_project/data/predictive_maintenance.csv"
+        )
 
     # Загрузка датасета в ClearML
     dataset_clearml = Dataset.create(
@@ -141,7 +143,7 @@ def analysis_and_model_page() -> None:
     output_model = OutputModel(task=task, framework="XGBoost")
     output_model.update_weights("best_model.json")
     task.update_output_model(
-        model_path="best_model.json", name="Best XGBoost Fold Model"
+        model_path="best_model.json", name="Best Model"
     )
 
     # Загрузка модели
